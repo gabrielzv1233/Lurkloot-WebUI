@@ -24,6 +24,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout WebUI
         uses: actions/checkout@v5
@@ -44,6 +45,10 @@ jobs:
 
       - name: Build and push
         uses: docker/build-push-action@v6
+        env:
+          # The default .dockerbuild artifact is a Buildx diagnostic record,
+          # not a runnable container image. Do not upload it as an Actions artifact.
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
         with:
           context: .
           push: true
@@ -58,3 +63,19 @@ jobs:
             io.lurkloot.upstream-ref=${{ inputs.lurkloot_ref }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Export runnable amd64 image
+        shell: bash
+        run: |
+          IMAGE="ghcr.io/gabrielzv1233/lurkloot-webui:manual-${{ github.run_number }}"
+          docker pull --platform linux/amd64 "$IMAGE"
+          docker save --output lurkloot-webui-linux-amd64.tar "$IMAGE"
+          ls -lh lurkloot-webui-linux-amd64.tar
+
+      - name: Upload runnable Docker image
+        uses: actions/upload-artifact@v4
+        with:
+          name: lurkloot-webui-linux-amd64
+          path: lurkloot-webui-linux-amd64.tar
+          compression-level: 0
+          if-no-files-found: error
