@@ -1,4 +1,4 @@
-import { StrictMode, useMemo, useRef, useState } from "react";
+import { StrictMode, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Popup,
@@ -12,13 +12,35 @@ import {
   translateFromCatalogs,
   type MessageCatalog,
 } from "@lurkloot/shared/i18n";
-import type { RuntimeMessage, RuntimeSnapshot } from "@lurkloot/shared/messages";
+import type {
+  CliCredentialBlob,
+  RuntimeMessage,
+  RuntimeSnapshot,
+} from "@lurkloot/shared/messages";
 import type { SupportedLocale } from "@lurkloot/shared/models";
 import "@lurkloot/popup-ui/fonts.css";
 import "@lurkloot/popup-ui/styles.css";
 import "./web.css";
 
 declare const __LURKLOOT_REF__: string;
+
+interface WebUiCapabilities {
+  host: {
+    browserTabs: boolean;
+    twitchIntegrityCapture: boolean;
+    supplementalSources: boolean;
+  };
+  transport: {
+    kind: string;
+    twitch: boolean;
+    kick: boolean;
+    twitchChannelPointsPush: boolean;
+  };
+  web: {
+    inPagePanel: boolean;
+    notifications: boolean;
+  };
+}
 
 type TwitchLoginState =
   | { status: "starting" }
@@ -30,6 +52,8 @@ type TwitchLoginState =
       expiresAt: number;
     }
   | { status: "error"; message: string };
+
+type NotificationState = "unsupported" | "off" | "busy" | "on" | "denied" | "error";
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -52,6 +76,41 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 function storageKey(key: string): string {
   return `lurkloot-webui:${key}`;
+}
+
+function pushApplicationServerKey(value: string): Uint8Array {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replaceAll("-", "+").replaceAll("_", "/");
+  const decoded = atob(base64);
+  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+}
+
+function pushSupported(): boolean {
+  return "serviceWorker" in navigator
+    && "PushManager" in window
+    && "Notification" in window;
+}
+
+function applyCapabilityAttributes(capabilities: WebUiCapabilities): void {
+  const root = document.documentElement;
+  root.dataset.webuiBrowserTabs = String(capabilities.host.browserTabs);
+  root.dataset.webuiTwitchIntegrity = String(capabilities.host.twitchIntegrityCapture);
+  root.dataset.webuiSupplementalSources = String(capabilities.host.supplementalSources);
+  root.dataset.webuiTwitch = String(capabilities.transport.twitch);
+  root.dataset.webuiKick = String(capabilities.transport.kick);
+  root.dataset.webuiChannelPointsPush = String(capabilities.transport.twitchChannelPointsPush);
+  root.dataset.webuiInPagePanel = String(capabilities.web.inPagePanel);
+  root.dataset.webuiNotifications = String(capabilities.web.notifications);
+
+  // The stock popup remembers the selected platform in host storage. Do not
+  // reopen on a transport this host does not expose.
+  if (!capabilities.transport.kick) {
+    localStorage.setItem(storageKey("popup:selectedPlatform"), JSON.stringify("twitch"));
+  }
+
+  (globalThis as typeof globalThis & {
+    __LURKLOOT_WEBUI_CAPABILITIES__?: WebUiCapabilities;
+  }).__LURKLOOT_WEBUI_CAPABILITIES__ = capabilities;
 }
 
 function createWebPopupAdapter(
@@ -136,6 +195,8 @@ function createWebPopupAdapter(
       };
       input.click();
     }),
+    exportCredentials: (payload: CliCredentialBlob) =>
+      download("lurkloot-credentials.json", JSON.stringify(payload, null, 2), "application/json"),
     writeClipboard: async (text) => {
       try {
         await navigator.clipboard.writeText(text);
@@ -156,13 +217,46 @@ function App({
   locale,
   catalog,
   fallbackCatalog,
+  capabilities,
 }: {
   locale: SupportedLocale;
   catalog: MessageCatalog | undefined;
   fallbackCatalog: MessageCatalog;
+  capabilities: WebUiCapabilities;
 }) {
   const [login, setLogin] = useState<TwitchLoginState | null>(null);
+  const [notificationState, setNotificationState] = useState<NotificationState>("off");
+  const [notificationError, setNotificationError] = useState<string>();
   const activeSession = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      if (!capabilities.web.notifications || !pushSupported()) {
+        if (!cancelled) setNotificationState("unsupported");
+        return;
+      }
+
+      if (Notification.permission === "denied") {
+        if (!cancelled) setNotificationState("denied");
+        return;
+      }
+
+      const registration = await navigator.serviceWorker.getRegistration("/");
+      const subscription = await registration?.pushManager.getSubscription();
+      if (!cancelled) setNotificationState(subscription ? "on" : "off");
+    })().catch((error) => {
+      if (!cancelled) {
+        setNotificationError(error instanceof Error ? error.message : String(error));
+        setNotificationState("error");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [capabilities.web.notifications]);
 
   const beginTwitchLogin = async () => {
     if (login?.status === "starting" || login?.status === "pending") return;
@@ -241,9 +335,76 @@ function App({
     input.click();
   };
 
+  const toggleNotifications = async () => {
+    if (!capabilities.web.notifications || !pushSupported()) return;
+
+    setNotificationState("busy");
+    setNotificationError(undefined);
+
+    try {
+      const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      const current = await registration.pushManager.getSubscription();
+
+      if (current) {
+        await api<{ ok: true }>("/api/notifications/unsubscribe", {
+          method: "POST",
+          body: JSON.stringify({ endpoint: current.endpoint }),
+        });
+        await current.unsubscribe();
+        setNotificationState("off");
+        return;
+      }
+
+      const permission = Notification.permission === "granted"
+        ? "granted"
+        : await Notification.requestPermission();
+
+      if (permission !== "granted") {
+        setNotificationState(permission === "denied" ? "denied" : "off");
+        return;
+      }
+
+      const { publicKey } = await api<{ publicKey: string }>("/api/notifications/public-key");
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: pushApplicationServerKey(publicKey),
+      });
+
+      await api<{ ok: true }>("/api/notifications/subscribe", {
+        method: "POST",
+        body: JSON.stringify(subscription.toJSON()),
+      });
+
+      setNotificationState("on");
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : String(error));
+      setNotificationState("error");
+    }
+  };
+
+  const notificationLabel = {
+    unsupported: "Notifications unavailable",
+    off: "Enable notifications",
+    busy: "Notifications…",
+    on: "Notifications on",
+    denied: "Notifications blocked",
+    error: "Retry notifications",
+  }[notificationState];
+
   return (
     <main className="popup-stage">
-      <div className="auth-actions">
+      <div className="web-actions">
+        {capabilities.web.notifications ? (
+          <button
+            type="button"
+            data-active={notificationState === "on" ? "true" : undefined}
+            disabled={notificationState === "unsupported" || notificationState === "busy" || notificationState === "denied"}
+            onClick={() => void toggleNotifications()}
+            title={notificationError ?? (notificationState === "on" ? "Click to unsubscribe this browser" : undefined)}
+          >
+            {notificationLabel}
+          </button>
+        ) : null}
         <button type="button" onClick={() => void beginTwitchLogin()}>
           Connect Twitch
         </button>
@@ -298,9 +459,15 @@ function App({
 }
 
 async function bootstrap() {
-  const locale = normalizeBrowserLocale(navigator.language);
-  const fallbackCatalog = await loadCatalog("en");
+  const [capabilities, fallbackCatalog] = await Promise.all([
+    api<WebUiCapabilities>("/api/capabilities"),
+    loadCatalog("en"),
+  ]);
   if (!fallbackCatalog) throw new Error("Failed to load English Lurkloot locale");
+
+  applyCapabilityAttributes(capabilities);
+
+  const locale = normalizeBrowserLocale(navigator.language);
   const catalog = locale === "en" ? fallbackCatalog : await loadCatalog(locale);
 
   const root = document.getElementById("root");
@@ -308,7 +475,12 @@ async function bootstrap() {
 
   createRoot(root).render(
     <StrictMode>
-      <App locale={locale} catalog={catalog} fallbackCatalog={fallbackCatalog} />
+      <App
+        locale={locale}
+        catalog={catalog}
+        fallbackCatalog={fallbackCatalog}
+        capabilities={capabilities}
+      />
     </StrictMode>,
   );
 }
