@@ -1,24 +1,70 @@
 # Lurkloot WebUI
 
-A thin web-host proof of concept for [Lurkloot](https://github.com/jamezrin/lurkloot).
+A thin web host for [Lurkloot](https://github.com/jamezrin/lurkloot).
 
-The goal is to keep Lurkloot itself stock. This repository owns only the web-host layer and Docker packaging.
+The project keeps Lurkloot's core and popup UI stock. Docker checks out a chosen
+upstream Lurkloot ref, adds this repository's `overlay/` package to the existing
+pnpm workspace, and builds the WebUI against that exact upstream source.
 
-## Current mock
+## Current status
 
-The current container:
+The WebUI now runs a real headless Twitch runtime:
 
-- fetches a chosen upstream Lurkloot ref during the Docker build;
-- injects the small package in `overlay/` into the upstream pnpm workspace;
-- imports the real `@lurkloot/popup-ui` package;
-- uses Lurkloot's stock `createDemoPopupAdapter()`;
-- serves the resulting web app from nginx.
+- stock `@lurkloot/popup-ui`
+- stock `createBackgroundController()`
+- stock CLI HTTP Twitch transport
+- stock CLI Node job scheduler and state persistence
+- stock Twitch Android device-code OAuth flow
+- popup `RuntimeMessage` calls bridged over HTTP
+- persistent settings, scheduler state, credentials, and activity under `/data`
 
-No Lurkloot source files are patched or copied into this repository.
+The current host is Twitch-first. Kick remains visible because the UI is stock,
+but the runtime currently uses the lightweight CLI HTTP transport, which is the
+supported headless path for Twitch. Kick support can be added later with the
+CLI impersonation transport.
 
-> This is currently a UI/runtime-boundary mock. It displays the real upstream popup UI with upstream demo data. It does **not** run the headless farming core yet.
+## Architecture
 
-The next step is replacing the demo adapter with a web adapter that sends Lurkloot `RuntimeMessage` objects to a Node host backed by the same headless controller/transports as the CLI.
+```text
+stock @lurkloot/popup-ui
+          |
+          | RuntimeMessage
+          v
+Web PopupAdapter
+          |
+          | POST /api/message
+          v
+Node WebUI host
+          |
+          v
+stock createBackgroundController()
+          |
+          +-- stock CLI HTTP Twitch transport
+          +-- stock CLI Node scheduler
+          +-- /data settings/state/auth/activity
+```
+
+No upstream Lurkloot source file is patched.
+
+## Run from GHCR
+
+```bash
+docker pull ghcr.io/gabrielzv1233/lurkloot-webui:latest
+
+docker run -d \
+  --name lurkloot-webui \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v lurkloot-webui-data:/data \
+  ghcr.io/gabrielzv1233/lurkloot-webui:latest
+```
+
+Open <http://localhost:8080>.
+
+When Twitch authentication is missing, use the popup's normal **Sign in** action.
+The WebUI intercepts that action and displays Twitch's device code. Authorization
+is saved into `/data/auth/credentials.json`, then the headless runtime restarts
+against the authenticated stock CLI transport.
 
 ## Build locally
 
@@ -26,17 +72,14 @@ The next step is replacing the demo adapter with a web adapter that sends Lurklo
 docker build \
   --build-arg LURKLOOT_REF=develop \
   -t lurkloot-webui .
+
+docker run --rm \
+  -p 8080:8080 \
+  -v lurkloot-webui-data:/data \
+  lurkloot-webui
 ```
 
-Run it:
-
-```bash
-docker run --rm -p 8080:80 lurkloot-webui
-```
-
-Open <http://localhost:8080>.
-
-You can also use Compose:
+Or:
 
 ```bash
 docker compose up --build
@@ -44,52 +87,52 @@ docker compose up --build
 
 ## Build a specific upstream version
 
-`LURKLOOT_REF` can be a branch, tag, or commit SHA:
+`LURKLOOT_REF` accepts a branch, tag, or commit SHA:
 
 ```bash
 docker build \
-  --build-arg LURKLOOT_REF=b531a6dc5d483068e77f6a1258a57633be40bced \
+  --build-arg LURKLOOT_REF=v1.14.1 \
   -t lurkloot-webui .
 ```
 
-That keeps the popup UI, shared contracts, locales, and eventually the core/CLI runtime on the same upstream revision.
+Core, shared contracts, locales, popup UI, and the borrowed CLI host pieces all
+come from the same upstream revision.
 
-## Manual GitHub Actions Docker build
+## Manual GitHub Actions build
 
-Open **Actions → Build Docker image → Run workflow**.
+Open **Actions -> Build Docker image -> Run workflow**.
 
-The workflow accepts:
+Inputs:
 
-- **Lurkloot ref**: upstream branch, tag, or SHA. Defaults to `develop`.
+- **Lurkloot ref**: branch, tag, or SHA. Defaults to `develop`.
 - **Platforms**: `linux/amd64` or `linux/amd64,linux/arm64`.
 
-A successful run pushes:
+Successful builds push:
 
 ```text
 ghcr.io/gabrielzv1233/lurkloot-webui:latest
 ghcr.io/gabrielzv1233/lurkloot-webui:manual-<run number>
 ```
 
-The workflow uses the repository `GITHUB_TOKEN` and `packages: write`, so no separate GHCR token is required.
+The workflow also uploads a runnable `linux/amd64` Docker image tar.
 
-## Intended architecture
+## Persistent data
 
 ```text
-stock @lurkloot/popup-ui
-          |
-          | RuntimeMessage
-          v
-our Web PopupAdapter
-          |
-          | HTTP
-          v
-our Node web host
-          |
-          v
-stock createBackgroundController()
-          |
-          v
-stock @lurkloot/core + headless Twitch transport
+/data/
+├── settings.json
+├── state.json
+├── activity.jsonl
+└── auth/
+    └── credentials.json
 ```
 
-Only the adapter/server boundary should belong to this repository. Upstream packages should remain unmodified so updating Lurkloot is normally just rebuilding against a newer `LURKLOOT_REF`.
+Replacing the Docker container does not remove this data when `/data` is backed
+by a volume.
+
+## Updating upstream
+
+The running container is immutable. Updating Lurkloot means rebuilding the image
+against a newer `LURKLOOT_REF` and replacing the container. Automatic
+release-based rebuilding and optional container auto-pull are intentionally
+being left for a later step.
