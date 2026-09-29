@@ -1,0 +1,11 @@
+services:
+  lurkloot-webui:
+    build:
+      context: .
+      args:
+        LURKLOOT_REF: ${LURKLOOT_REF:-develop}
+    image: lurkloot-webui:local
+    container_name: lurkloot-webui
+    restart: unless-stopped
+    ports:
+      - "${LURKLOOT_WEBUI_PORT:-8080}:80"
