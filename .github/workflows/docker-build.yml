@@ -46,8 +46,6 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         env:
-          # The default .dockerbuild artifact is a Buildx diagnostic record,
-          # not a runnable container image. Do not upload it as an Actions artifact.
           DOCKER_BUILD_RECORD_UPLOAD: "false"
         with:
           context: .
@@ -64,11 +62,39 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Export runnable amd64 image
+      - name: Pull amd64 image
         shell: bash
         run: |
           IMAGE="ghcr.io/gabrielzv1233/lurkloot-webui:manual-${{ github.run_number }}"
           docker pull --platform linux/amd64 "$IMAGE"
+
+      - name: Smoke test runtime
+        shell: bash
+        run: |
+          IMAGE="ghcr.io/gabrielzv1233/lurkloot-webui:manual-${{ github.run_number }}"
+          docker run -d --name lurkloot-webui-smoke -p 18080:8080 "$IMAGE"
+
+          cleanup() {
+            docker logs lurkloot-webui-smoke || true
+            docker rm -f lurkloot-webui-smoke >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18080/api/health >/dev/null; then
+              echo "WebUI runtime is healthy"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "WebUI runtime did not become healthy" >&2
+          exit 1
+
+      - name: Export runnable amd64 image
+        shell: bash
+        run: |
+          IMAGE="ghcr.io/gabrielzv1233/lurkloot-webui:manual-${{ github.run_number }}"
           docker save --output lurkloot-webui-linux-amd64.tar "$IMAGE"
           ls -lh lurkloot-webui-linux-amd64.tar
 
