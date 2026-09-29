@@ -245,6 +245,15 @@ function App({
 
       const registration = await navigator.serviceWorker.getRegistration("/");
       const subscription = await registration?.pushManager.getSubscription();
+      if (subscription) {
+        // Re-register an existing browser subscription with the server. This
+        // repairs the server-side list automatically if /data was restored or
+        // the subscription file was replaced while the browser kept its key.
+        await api<{ ok: true }>("/api/notifications/subscribe", {
+          method: "POST",
+          body: JSON.stringify(subscription.toJSON()),
+        });
+      }
       if (!cancelled) setNotificationState(subscription ? "on" : "off");
     })().catch((error) => {
       if (!cancelled) {
