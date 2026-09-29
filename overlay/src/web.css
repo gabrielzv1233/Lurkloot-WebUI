@@ -111,3 +111,41 @@ body {
 .login-error {
   color: #fda4af !important;
 }
+
+
+.auth-actions {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 9000;
+  display: flex;
+  gap: 6px;
+}
+
+.auth-actions button {
+  border: 1px solid #303036;
+  border-radius: 8px;
+  background: rgb(17 17 19 / 0.92);
+  padding: 7px 10px;
+  color: #d4d4d8;
+  font: 600 12px/1 "Geist Variable", "Geist", ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.auth-actions button:hover {
+  background: #1c1c20;
+  color: #fff;
+}
+
+@media (max-width: 520px) {
+  .auth-actions {
+    top: 8px;
+    right: 8px;
+  }
+
+  .auth-actions button {
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+}
