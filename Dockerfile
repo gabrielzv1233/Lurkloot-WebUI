@@ -23,8 +23,13 @@ RUN git init lurkloot \
 WORKDIR /src/lurkloot
 
 # The upstream workspace already includes packages/*, so the WebUI remains an
-# additive host package. No Lurkloot source files are patched.
+# additive host package. Upstream source stays unchanged on disk; Vite applies
+# small, validated semantic DOM hooks while bundling the stock popup.
 COPY overlay/ packages/webui/
+
+# Reuse the exact upstream Lurkloot icon from the same checked-out revision.
+RUN mkdir -p packages/webui/public \
+    && cp packages/extension/public/icon/128.png packages/webui/public/icon-128.png
 
 RUN pnpm install --no-frozen-lockfile --filter @lurkloot/webui...
 RUN pnpm --filter @lurkloot/webui build \
