@@ -8,4 +8,6 @@ services:
     container_name: lurkloot-webui
     restart: unless-stopped
     ports:
-      - "${LURKLOOT_WEBUI_PORT:-8080}:80"
+      - "${LURKLOOT_WEBUI_PORT:-8080}:8080"
+    volumes:
+      - ./data:/data
