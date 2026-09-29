@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import webPush from "web-push";
+import * as webPush from "web-push";
 
 export interface StoredPushSubscription {
   endpoint: string;
