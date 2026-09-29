@@ -113,6 +113,15 @@ function normalizeForHost(value: unknown): ExtensionSettings {
       nopixel: { ...settings.twitchExtensions.nopixel, enabled: false },
       fortnite: { ...settings.twitchExtensions.fortnite, enabled: false },
     };
+    settings.platform = {
+      ...settings.platform,
+      twitch: {
+        ...settings.platform.twitch,
+        watchSourcePriority: settings.platform.twitch.watchSourcePriority.filter(
+          (source) => source !== "nopixel" && source !== "fortnite",
+        ),
+      },
+    };
   }
 
   if (!TRANSPORT_SUPPORT.kick) {
