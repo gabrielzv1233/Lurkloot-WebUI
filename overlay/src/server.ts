@@ -310,6 +310,56 @@ await runtime.start();
 
 const authSessions = new Map<string, AuthSession>();
 
+function importedCredentials(value: unknown): {
+  twitch?: { authToken?: string; deviceId?: string; clientId?: string };
+  kick?: { sessionToken?: string };
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Credential file must contain a JSON object");
+  }
+
+  const root = value as Record<string, unknown>;
+  const source = root.credentials && typeof root.credentials === "object" && !Array.isArray(root.credentials)
+    ? root.credentials as Record<string, unknown>
+    : root;
+
+  const imported: {
+    twitch?: { authToken?: string; deviceId?: string; clientId?: string };
+    kick?: { sessionToken?: string };
+  } = {};
+
+  if (source.twitch && typeof source.twitch === "object" && !Array.isArray(source.twitch)) {
+    const twitch = source.twitch as Record<string, unknown>;
+    const authToken = typeof twitch.authToken === "string" ? twitch.authToken.trim() : undefined;
+    const deviceId = typeof twitch.deviceId === "string" ? twitch.deviceId.trim() : undefined;
+    const clientId = typeof twitch.clientId === "string" ? twitch.clientId.trim() : undefined;
+
+    if (authToken || deviceId || clientId) {
+      imported.twitch = {
+        ...(authToken ? { authToken } : {}),
+        ...(deviceId ? { deviceId } : {}),
+        ...(clientId ? { clientId } : {}),
+      };
+    }
+  }
+
+  if (source.kick && typeof source.kick === "object" && !Array.isArray(source.kick)) {
+    const kick = source.kick as Record<string, unknown>;
+    const sessionToken = typeof kick.sessionToken === "string" ? kick.sessionToken.trim() : undefined;
+    if (sessionToken) imported.kick = { sessionToken };
+  }
+
+  if (!imported.twitch?.authToken && !imported.kick?.sessionToken) {
+    throw new Error("No supported Twitch or Kick credential was found in that file");
+  }
+
+  if (imported.twitch?.authToken && !imported.twitch.clientId) {
+    imported.twitch.clientId = TWITCH_ANDROID_CLIENT_ID;
+  }
+
+  return imported;
+}
+
 async function startTwitchAuth(): Promise<{
   sessionId: string;
   userCode: string;
@@ -480,6 +530,14 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/auth/twitch/start") {
       json(response, 200, await startTwitchAuth());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/auth/import") {
+      const credentials = importedCredentials(await readJson(request));
+      saveCredentials(AUTH_DIR, credentials);
+      await runtime.restart();
+      json(response, 200, { ok: true });
       return;
     }
 
