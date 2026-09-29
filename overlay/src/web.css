@@ -35,3 +35,79 @@ body {
 .popup-stage > main {
   flex: 0 0 auto;
 }
+
+.login-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.login-dialog {
+  width: min(100%, 390px);
+  border: 1px solid #303036;
+  border-radius: 14px;
+  background: #111113;
+  padding: 20px;
+  color: #fafafa;
+  box-shadow: 0 18px 60px rgb(0 0 0 / 0.45);
+  font-family: "Geist Variable", "Geist", ui-sans-serif, system-ui, sans-serif;
+}
+
+.login-dialog h2 {
+  margin: 0 0 12px;
+  font: 700 20px/1.2 "Archivo Variable", "Archivo", sans-serif;
+}
+
+.login-dialog p {
+  color: #b4b4bc;
+  line-height: 1.45;
+}
+
+.device-code,
+.primary-button,
+.secondary-button {
+  width: 100%;
+  border-radius: 9px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.device-code {
+  margin: 6px 0 14px;
+  border: 1px solid #35353b;
+  background: #09090b;
+  padding: 14px;
+  color: #fff;
+  font: 700 24px/1 "Geist Mono Variable", monospace;
+  letter-spacing: 0.12em;
+}
+
+.primary-button {
+  border: 0;
+  background: #fafafa;
+  padding: 11px 14px;
+  color: #0a0a0a;
+  font-weight: 700;
+}
+
+.secondary-button {
+  margin-top: 10px;
+  border: 1px solid #35353b;
+  background: transparent;
+  padding: 10px 14px;
+  color: #d4d4d8;
+}
+
+.login-hint {
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.login-error {
+  color: #fda4af !important;
+}
