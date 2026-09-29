@@ -217,8 +217,41 @@ function App({
     setLogin(null);
   };
 
+  const importCredentials = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json,.json";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const contents = JSON.parse(await file.text()) as unknown;
+        await api<{ ok: true }>("/api/auth/import", {
+          method: "POST",
+          body: JSON.stringify(contents),
+        });
+        window.location.reload();
+      } catch (error) {
+        setLogin({
+          status: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+    input.click();
+  };
+
   return (
     <main className="popup-stage">
+      <div className="auth-actions">
+        <button type="button" onClick={() => void beginTwitchLogin()}>
+          Connect Twitch
+        </button>
+        <button type="button" onClick={importCredentials}>
+          Import credentials
+        </button>
+      </div>
+
       <Popup adapter={adapter} />
 
       {login && (
