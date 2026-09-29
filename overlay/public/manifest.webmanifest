@@ -1,0 +1,17 @@
+{
+  "name": "Lurkloot WebUI",
+  "short_name": "Lurkloot",
+  "description": "Web-hosted headless Lurkloot runtime",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "icons": [
+    {
+      "src": "/icon-128.png",
+      "sizes": "128x128",
+      "type": "image/png"
+    }
+  ]
+}
