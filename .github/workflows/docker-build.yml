@@ -83,6 +83,10 @@ jobs:
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:18080/api/health >/dev/null; then
               echo "WebUI runtime is healthy"
+              curl --fail --silent http://127.0.0.1:18080/api/capabilities | grep -q '"browserTabs":false'
+              curl --fail --silent http://127.0.0.1:18080/api/notifications/public-key | grep -q '"publicKey"'
+              curl --fail --silent http://127.0.0.1:18080/sw.js | grep -q 'notificationclick'
+              curl --fail --silent http://127.0.0.1:18080/manifest.webmanifest | grep -q 'Lurkloot WebUI'
               exit 0
             fi
             sleep 1
