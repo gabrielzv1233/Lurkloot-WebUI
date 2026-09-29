@@ -36,6 +36,44 @@ body {
   flex: 0 0 auto;
 }
 
+/* The build injects these semantic wrappers into upstream settings.tsx. */
+[data-setting-id] {
+  display: block;
+}
+
+/* Headless hosts have no watch tabs or content-script page integration. */
+html[data-webui-browser-tabs="false"] [id="settings-section-general.farmingTabs"],
+html[data-webui-browser-tabs="false"] [data-setting-id="general.appearance.pauseOnManualWatch"],
+html[data-webui-in-page-panel="false"] [data-setting-id="general.appearance.inPagePanel"],
+html[data-webui-browser-tabs="false"] [data-setting-id="general.advanced.kickPageContextRecoverySuccesses"] {
+  display: none !important;
+}
+
+/* The plain HTTP Twitch transport has no Hermes push observer. The one-minute
+   channel-point claim job still runs, so only the instant-push toggle is hidden. */
+html[data-webui-channel-points-push="false"] [data-setting-id="twitch.advanced.channelPointsPushClaim"] {
+  display: none !important;
+}
+
+/* Supplemental Twitch Extension providers require the extension host. */
+html[data-webui-supplemental-sources="false"] [data-rail-group="navExtensions"],
+html[data-webui-supplemental-sources="false"] [data-view="nopixel"],
+html[data-webui-supplemental-sources="false"] [data-view="fortnite"],
+html[data-webui-supplemental-sources="false"] [data-watch-source="nopixel"],
+html[data-webui-supplemental-sources="false"] [data-watch-source="fortnite"] {
+  display: none !important;
+}
+
+/* The current HTTP transport is Twitch-only. */
+html[data-webui-kick="false"] [data-platform-status="kick"],
+html[data-webui-kick="false"] [id^="settings-section-kick"] {
+  display: none !important;
+}
+
+html[data-webui-kick="false"] [role="tablist"]:has([data-platform-status="kick"]) {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
 .login-backdrop {
   position: fixed;
   inset: 0;
@@ -112,8 +150,7 @@ body {
   color: #fda4af !important;
 }
 
-
-.auth-actions {
+.web-actions {
   position: fixed;
   top: 12px;
   right: 12px;
@@ -122,7 +159,7 @@ body {
   gap: 6px;
 }
 
-.auth-actions button {
+.web-actions button {
   border: 1px solid #303036;
   border-radius: 8px;
   background: rgb(17 17 19 / 0.92);
@@ -133,18 +170,33 @@ body {
   backdrop-filter: blur(8px);
 }
 
-.auth-actions button:hover {
+.web-actions button:hover:not(:disabled),
+.web-actions button[data-active="true"] {
   background: #1c1c20;
   color: #fff;
 }
 
-@media (max-width: 520px) {
-  .auth-actions {
-    top: 8px;
-    right: 8px;
+.web-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+@media (max-width: 720px) {
+  .popup-stage {
+    align-items: start;
+    padding-top: 52px;
   }
 
-  .auth-actions button {
+  .web-actions {
+    top: 8px;
+    right: 8px;
+    left: 8px;
+    justify-content: flex-end;
+    overflow-x: auto;
+  }
+
+  .web-actions button {
+    flex: 0 0 auto;
     padding: 6px 8px;
     font-size: 11px;
   }
