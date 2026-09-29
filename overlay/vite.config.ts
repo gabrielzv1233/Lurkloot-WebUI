@@ -5,6 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
+const popupPath = fileURLToPath(new URL("../popup-ui/src/Popup.tsx", import.meta.url));
 const popupSettingsPath = fileURLToPath(new URL("../popup-ui/src/settings.tsx", import.meta.url));
 const popupRegistryPath = fileURLToPath(new URL("../popup-ui/src/settingsRegistry.tsx", import.meta.url));
 const popupShellPath = fileURLToPath(new URL("../popup-ui/src/shell.tsx", import.meta.url));
@@ -18,12 +19,23 @@ function requireSource(source: string, needle: string, file: string): void {
   }
 }
 
+const supplementalFilter = `.filter((source) => {
+  const capabilities = (globalThis as typeof globalThis & {
+    __LURKLOOT_WEBUI_CAPABILITIES__?: { host?: { supplementalSources?: boolean } };
+  }).__LURKLOOT_WEBUI_CAPABILITIES__;
+  return capabilities?.host?.supplementalSources !== false
+    || (source !== "nopixel" && source !== "fortnite");
+})`;
+
 function webUiCompatibilityHooks(): Plugin {
   return {
     name: "lurkloot-webui-compatibility-hooks",
     enforce: "pre",
 
     buildStart() {
+      const popup = readFileSync(popupPath, "utf8");
+      requireSource(popup, "const sourceOrder = settings.platform[platform].watchSourcePriority;", "Popup.tsx");
+
       const settings = readFileSync(popupSettingsPath, "utf8");
       requireSource(settings, "<React.Fragment key={entry.id}>{entry.render()}</React.Fragment>", "settings.tsx");
       requireSource(settings, "<React.Fragment key={row.id}>{row.render()}</React.Fragment>", "settings.tsx");
@@ -45,28 +57,58 @@ function webUiCompatibilityHooks(): Plugin {
       requireSource(shell, "data-rail-group={labelKey}", "shell.tsx");
 
       const watchPriority = readFileSync(watchPriorityPath, "utf8");
+      requireSource(watchPriority, "const order = normalizeWatchSourcePriority(platform, value);", "watchSourcePriority.tsx");
+      requireSource(watchPriority, "void onChange([...DEFAULT_WATCH_SOURCE_PRIORITY[platform]]);", "watchSourcePriority.tsx");
       requireSource(watchPriority, "data-watch-source={source}", "watchSourcePriority.tsx");
     },
 
     transform(code, id) {
       const normalized = id.replaceAll("\\", "/");
-      if (!normalized.endsWith("/packages/popup-ui/src/settings.tsx")) return undefined;
 
-      const entryFragment = "<React.Fragment key={entry.id}>{entry.render()}</React.Fragment>";
-      const rowFragment = "<React.Fragment key={row.id}>{row.render()}</React.Fragment>";
+      if (normalized.endsWith("/packages/popup-ui/src/settings.tsx")) {
+        const entryFragment = "<React.Fragment key={entry.id}>{entry.render()}</React.Fragment>";
+        const rowFragment = "<React.Fragment key={row.id}>{row.render()}</React.Fragment>";
 
-      const entryCount = code.split(entryFragment).length - 1;
-      const rowCount = code.split(rowFragment).length - 1;
-      if (entryCount === 0 || rowCount === 0) {
-        throw new Error("Lurkloot WebUI could not install semantic setting hooks into upstream settings.tsx");
+        const entryCount = code.split(entryFragment).length - 1;
+        const rowCount = code.split(rowFragment).length - 1;
+        if (entryCount === 0 || rowCount === 0) {
+          throw new Error("Lurkloot WebUI could not install semantic setting hooks into upstream settings.tsx");
+        }
+
+        return {
+          code: code
+            .replaceAll(entryFragment, '<div key={entry.id} data-setting-id={entry.id}>{entry.render()}</div>')
+            .replaceAll(rowFragment, '<div key={row.id} data-setting-id={row.id}>{row.render()}</div>'),
+          map: null,
+        };
       }
 
-      return {
-        code: code
-          .replaceAll(entryFragment, '<div key={entry.id} data-setting-id={entry.id}>{entry.render()}</div>')
-          .replaceAll(rowFragment, '<div key={row.id} data-setting-id={row.id}>{row.render()}</div>'),
-        map: null,
-      };
+      if (normalized.endsWith("/packages/popup-ui/src/watchSourcePriority.tsx")) {
+        return {
+          code: code
+            .replace(
+              "const order = normalizeWatchSourcePriority(platform, value);",
+              `const order = normalizeWatchSourcePriority(platform, value)${supplementalFilter};`,
+            )
+            .replace(
+              "void onChange([...DEFAULT_WATCH_SOURCE_PRIORITY[platform]]);",
+              `void onChange([...DEFAULT_WATCH_SOURCE_PRIORITY[platform]]${supplementalFilter});`,
+            ),
+          map: null,
+        };
+      }
+
+      if (normalized.endsWith("/packages/popup-ui/src/Popup.tsx")) {
+        return {
+          code: code.replace(
+            "const sourceOrder = settings.platform[platform].watchSourcePriority;",
+            `const sourceOrder = settings.platform[platform].watchSourcePriority${supplementalFilter};`,
+          ),
+          map: null,
+        };
+      }
+
+      return undefined;
     },
   };
 }
