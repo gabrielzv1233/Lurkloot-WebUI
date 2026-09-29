@@ -25,6 +25,7 @@ import type {
 import type {
   ActivityPage,
   ActivityQuery,
+  CliCredentialBlob,
   CoreRuntimeMessage,
   DiagnosticsExport,
   RuntimeMessage,
@@ -55,6 +56,8 @@ import { loadState, saveState } from "../../cli/src/storage";
 import { createHttpTransport } from "../../cli/src/transport/http";
 import { TWITCH_ANDROID_CLIENT_ID } from "../../cli/src/twitch";
 
+import { NotificationHub } from "./notifications";
+
 const PORT = Number(process.env.PORT ?? 8080);
 const DATA_DIR = resolve(process.env.DATA_DIR ?? "/data");
 const SETTINGS_PATH = join(DATA_DIR, "settings.json");
@@ -64,6 +67,25 @@ const ACTIVITY_PATH = join(DATA_DIR, "activity.jsonl");
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = resolve(MODULE_DIR, "../dist");
+
+const TRANSPORT_SUPPORT = {
+  twitch: true,
+  kick: false,
+} as const;
+
+const WEBUI_CAPABILITIES = {
+  host: CLI_CAPABILITIES,
+  transport: {
+    kind: "http",
+    twitch: TRANSPORT_SUPPORT.twitch,
+    kick: TRANSPORT_SUPPORT.kick,
+    twitchChannelPointsPush: false,
+  },
+  web: {
+    inPagePanel: false,
+    notifications: true,
+  },
+} as const;
 
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
@@ -77,20 +99,61 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   }
 }
 
+function normalizeForHost(value: unknown): ExtensionSettings {
+  const settings = mergeSettings(value as Partial<ExtensionSettings> | undefined);
+
+  if (!CLI_CAPABILITIES.browserTabs) {
+    settings.tablessMode = true;
+    settings.pauseOnManualWatch = false;
+    settings.showInPagePanel = false;
+  }
+
+  if (!CLI_CAPABILITIES.supplementalSources) {
+    settings.twitchExtensions = {
+      nopixel: { ...settings.twitchExtensions.nopixel, enabled: false },
+      fortnite: { ...settings.twitchExtensions.fortnite, enabled: false },
+    };
+  }
+
+  if (!TRANSPORT_SUPPORT.kick) {
+    settings.platform = {
+      ...settings.platform,
+      kick: { ...settings.platform.kick, enabled: false },
+    };
+  }
+
+  if (!WEBUI_CAPABILITIES.transport.twitchChannelPointsPush) {
+    settings.platform = {
+      ...settings.platform,
+      twitch: { ...settings.platform.twitch, channelPointsPushClaim: false },
+    };
+  }
+
+  // This host is not the browser extension, so never show the Chrome Web Store
+  // rate prompt even though the stock popup carries the preference.
+  settings.rateNudgeStatus = "dismissed";
+
+  return settings;
+}
+
 async function loadSettings(): Promise<ExtensionSettings> {
   try {
-    const raw = JSON.parse(await readFile(SETTINGS_PATH, "utf8")) as Partial<ExtensionSettings>;
-    return mergeSettings(raw);
+    const raw = JSON.parse(await readFile(SETTINGS_PATH, "utf8")) as unknown;
+    const settings = normalizeForHost(raw);
+    if (JSON.stringify(raw) !== JSON.stringify(settings)) {
+      await writeJsonAtomic(SETTINGS_PATH, settings);
+    }
+    return settings;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    const settings = mergeSettings(undefined);
+    const settings = normalizeForHost(undefined);
     await writeJsonAtomic(SETTINGS_PATH, settings);
     return settings;
   }
 }
 
 async function saveSettings(settings: ExtensionSettings): Promise<void> {
-  await writeJsonAtomic(SETTINGS_PATH, mergeSettings(settings));
+  await writeJsonAtomic(SETTINGS_PATH, normalizeForHost(settings));
 }
 
 class ActivityStore {
@@ -115,11 +178,15 @@ class ActivityStore {
     }
   }
 
-  async report(events: readonly EngineEvent[]): Promise<void> {
-    if (events.length === 0) return;
+  async report(events: readonly EngineEvent[], diagnosticLogging: boolean): Promise<void> {
+    const visible = diagnosticLogging
+      ? events
+      : events.filter((event) => event.category !== "diagnostic");
+    if (visible.length === 0) return;
+
     await mkdir(DATA_DIR, { recursive: true });
 
-    const records = events.map((event): ActivityHistoryRecord => ({
+    const records = visible.map((event): ActivityHistoryRecord => ({
       ...event,
       id: randomUUID(),
       at: event.emittedAt ?? new Date().toISOString(),
@@ -179,12 +246,15 @@ class RuntimeManager {
   private jobs?: ReturnType<typeof createNodeJobScheduler>;
   private restartPromise?: Promise<void>;
 
-  constructor(private readonly activity: ActivityStore) {}
+  constructor(
+    private readonly activity: ActivityStore,
+    private readonly notifications: NotificationHub,
+  ) {}
 
   async start(): Promise<void> {
     await mkdir(DATA_DIR, { recursive: true });
     const credentials = loadCredentials(AUTH_DIR);
-    const transport = createHttpTransport(credentials, { twitch: true, kick: false });
+    const transport = createHttpTransport(credentials, TRANSPORT_SUPPORT);
 
     let dispatchJob: (name: string) => void = () => undefined;
     const jobs = createNodeJobScheduler((name) => dispatchJob(name));
@@ -199,9 +269,15 @@ class RuntimeManager {
         saveState: (state: SchedulerState) => saveState(STATE_PATH, state),
       },
       events: {
-        report: (events) => this.activity.report(events),
+        report: async (events) => {
+          const settings = await loadSettings();
+          await this.activity.report(events, settings.diagnosticLogging);
+        },
         notify: async ({ title, message }) => {
           console.info(`[notify] ${title}: ${message}`);
+          void this.notifications.notify(title, message).catch((error) => {
+            console.warn("[push] notification dispatch failed:", error);
+          });
         },
       },
       jobs,
@@ -305,7 +381,10 @@ type AuthSession = {
 const activity = new ActivityStore();
 await activity.load();
 
-const runtime = new RuntimeManager(activity);
+const notifications = new NotificationHub(DATA_DIR);
+await notifications.load();
+
+const runtime = new RuntimeManager(activity, notifications);
 await runtime.start();
 
 const authSessions = new Map<string, AuthSession>();
@@ -358,6 +437,26 @@ function importedCredentials(value: unknown): {
   }
 
   return imported;
+}
+
+function exportedCredentials(): CliCredentialBlob {
+  const credentials = loadCredentials(AUTH_DIR);
+  return {
+    version: 1,
+    credentials: {
+      ...(credentials.twitch?.authToken || credentials.twitch?.deviceId
+        ? {
+            twitch: {
+              ...(credentials.twitch.authToken ? { authToken: credentials.twitch.authToken } : {}),
+              ...(credentials.twitch.deviceId ? { deviceId: credentials.twitch.deviceId } : {}),
+            },
+          }
+        : {}),
+      ...(credentials.kick?.sessionToken
+        ? { kick: { sessionToken: credentials.kick.sessionToken } }
+        : {}),
+    },
+  };
 }
 
 async function startTwitchAuth(): Promise<{
@@ -454,7 +553,7 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<unknown> {
     case "setTwitchExtensionEnabled":
       return runtime.snapshot();
     case "exportCliCredentials":
-      throw new Error("Credentials already belong to the headless WebUI runtime");
+      return exportedCredentials();
     case "getTabId":
       return null;
     default:
@@ -472,6 +571,7 @@ const MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".txt": "text/plain; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
 };
@@ -489,11 +589,13 @@ async function serveStatic(pathname: string, response: ServerResponse): Promise<
 
   try {
     const body = await readFile(path);
+    const noCache = path.endsWith("index.html")
+      || path.endsWith("sw.js")
+      || path.endsWith("manifest.webmanifest");
     response.writeHead(200, {
       "content-type": MIME_TYPES[extname(path)] ?? "application/octet-stream",
-      "cache-control": path.endsWith("index.html")
-        ? "no-cache"
-        : "public, max-age=31536000, immutable",
+      "cache-control": noCache ? "no-cache" : "public, max-age=31536000, immutable",
+      ...(path.endsWith("sw.js") ? { "service-worker-allowed": "/" } : {}),
     });
     response.end(body);
     return;
@@ -514,6 +616,35 @@ const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
 
     if (request.method === "GET" && url.pathname === "/api/health") {
+      json(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/capabilities") {
+      json(response, 200, WEBUI_CAPABILITIES);
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/notifications/public-key") {
+      json(response, 200, { publicKey: notifications.publicKey() });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/notifications/subscribe") {
+      await notifications.subscribe(await readJson(request));
+      json(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/notifications/unsubscribe") {
+      const body = await readJson(request) as { endpoint?: unknown } | undefined;
+      const removed = await notifications.unsubscribe(body?.endpoint);
+      json(response, 200, { ok: true, removed });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/notifications/test") {
+      await notifications.test();
       json(response, 200, { ok: true });
       return;
     }
