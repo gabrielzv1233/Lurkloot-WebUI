@@ -27,6 +27,13 @@ const supplementalFilter = `.filter((source) => {
     || (source !== "nopixel" && source !== "fortnite");
 })`;
 
+const platformFilter = `.filter((id) => {
+  const capabilities = (globalThis as typeof globalThis & {
+    __LURKLOOT_WEBUI_CAPABILITIES__?: { transport?: { twitch?: boolean; kick?: boolean } };
+  }).__LURKLOOT_WEBUI_CAPABILITIES__;
+  return capabilities?.transport?.[id] !== false;
+})`;
+
 function webUiCompatibilityHooks(): Plugin {
   return {
     name: "lurkloot-webui-compatibility-hooks",
@@ -39,6 +46,7 @@ function webUiCompatibilityHooks(): Plugin {
       const settings = readFileSync(popupSettingsPath, "utf8");
       requireSource(settings, "<React.Fragment key={entry.id}>{entry.render()}</React.Fragment>", "settings.tsx");
       requireSource(settings, "<React.Fragment key={row.id}>{row.render()}</React.Fragment>", "settings.tsx");
+      requireSource(settings, "const platformSections = (Object.keys(PLATFORMS) as Platform[])", "settings.tsx");
 
       const registry = readFileSync(popupRegistryPath, "utf8");
       for (const id of [
@@ -52,6 +60,7 @@ function webUiCompatibilityHooks(): Plugin {
       }
 
       const shell = readFileSync(popupShellPath, "utf8");
+      requireSource(shell, "const platformIds = Object.keys(PLATFORMS) as Platform[];", "shell.tsx");
       requireSource(shell, "data-view={item.view}", "shell.tsx");
       requireSource(shell, "data-platform-status={id}", "shell.tsx");
       requireSource(shell, "data-rail-group={labelKey}", "shell.tsx");
@@ -78,7 +87,11 @@ function webUiCompatibilityHooks(): Plugin {
         return {
           code: code
             .replaceAll(entryFragment, '<div key={entry.id} data-setting-id={entry.id}>{entry.render()}</div>')
-            .replaceAll(rowFragment, '<div key={row.id} data-setting-id={row.id}>{row.render()}</div>'),
+            .replaceAll(rowFragment, '<div key={row.id} data-setting-id={row.id}>{row.render()}</div>')
+            .replace(
+              "const platformSections = (Object.keys(PLATFORMS) as Platform[])",
+              `const platformSections = (Object.keys(PLATFORMS) as Platform[])${platformFilter}`,
+            ),
           map: null,
         };
       }
@@ -94,6 +107,16 @@ function webUiCompatibilityHooks(): Plugin {
               "void onChange([...DEFAULT_WATCH_SOURCE_PRIORITY[platform]]);",
               `void onChange([...DEFAULT_WATCH_SOURCE_PRIORITY[platform]]${supplementalFilter});`,
             ),
+          map: null,
+        };
+      }
+
+      if (normalized.endsWith("/packages/popup-ui/src/shell.tsx")) {
+        return {
+          code: code.replace(
+            "const platformIds = Object.keys(PLATFORMS) as Platform[];",
+            `const platformIds = (Object.keys(PLATFORMS) as Platform[])${platformFilter};`,
+          ),
           map: null,
         };
       }
