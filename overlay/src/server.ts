@@ -55,7 +55,7 @@ import { createNodeJobScheduler } from "../../cli/src/runtime/jobs";
 import { loadState, saveState } from "../../cli/src/storage";
 import { TwitchWebIntegrityManager } from "../../cli/src/auth/twitchWebIntegrity";
 import { createHttpTransport } from "../../cli/src/transport/http";
-import { TWITCH_SMARTBOX_CLIENT_ID, TWITCH_WEB_CLIENT_ID } from "../../cli/src/twitch";
+import { TWITCH_ANDROID_CLIENT_ID, TWITCH_SMARTBOX_CLIENT_ID, TWITCH_WEB_CLIENT_ID } from "../../cli/src/twitch";
 
 import { NotificationHub } from "./notifications";
 
@@ -74,19 +74,23 @@ const TRANSPORT_SUPPORT = {
   kick: false,
 } as const;
 
-const WEBUI_CAPABILITIES = {
-  host: CLI_CAPABILITIES,
-  transport: {
-    kind: "http",
-    twitch: TRANSPORT_SUPPORT.twitch,
-    kick: TRANSPORT_SUPPORT.kick,
-    twitchChannelPointsPush: false,
-  },
-  web: {
-    inPagePanel: false,
-    notifications: true,
-  },
-} as const;
+function webUiCapabilities() {
+  const clientId = loadCredentials(AUTH_DIR).twitch?.clientId;
+  return {
+    host: CLI_CAPABILITIES,
+    transport: {
+      kind: "http",
+      twitch: TRANSPORT_SUPPORT.twitch,
+      kick: TRANSPORT_SUPPORT.kick,
+      twitchIdentity: clientId === TWITCH_ANDROID_CLIENT_ID ? "android" : "web",
+      twitchChannelPointsPush: false,
+    },
+    web: {
+      inPagePanel: false,
+      notifications: true,
+    },
+  } as const;
+}
 
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
@@ -132,7 +136,7 @@ function normalizeForHost(value: unknown): ExtensionSettings {
     };
   }
 
-  if (!WEBUI_CAPABILITIES.transport.twitchChannelPointsPush) {
+  if (!webUiCapabilities().transport.twitchChannelPointsPush) {
     settings.platform = {
       ...settings.platform,
       twitch: { ...settings.platform.twitch, channelPointsPushClaim: false },
@@ -665,7 +669,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/capabilities") {
-      json(response, 200, WEBUI_CAPABILITIES);
+      json(response, 200, webUiCapabilities());
       return;
     }
 
