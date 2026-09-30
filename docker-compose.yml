@@ -3,7 +3,7 @@ services:
     build:
       context: .
       args:
-        LURKLOOT_REF: ${LURKLOOT_REF:-develop}
+        LURKLOOT_REF: ${LURKLOOT_REF:-feat/cli-twitch-web-integrity}
     image: lurkloot-webui:local
     container_name: lurkloot-webui
     restart: unless-stopped
