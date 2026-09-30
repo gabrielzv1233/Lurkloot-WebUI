@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build && esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=server/index.mjs",
+    "build": "vite build && node build-server.mjs",
     "dev": "vite --host 0.0.0.0"
   },
   "dependencies": {
