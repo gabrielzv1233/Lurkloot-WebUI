@@ -6,7 +6,7 @@ on:
       lurkloot_ref:
         description: Upstream jamezrin/lurkloot branch, tag, or commit SHA
         required: true
-        default: develop
+        default: feat/cli-twitch-web-integrity
         type: string
       platforms:
         description: Docker platforms
