@@ -53,8 +53,9 @@ import {
 } from "../../cli/src/auth/twitchDeviceFlow";
 import { createNodeJobScheduler } from "../../cli/src/runtime/jobs";
 import { loadState, saveState } from "../../cli/src/storage";
+import { TwitchWebIntegrityManager } from "../../cli/src/auth/twitchWebIntegrity";
 import { createHttpTransport } from "../../cli/src/transport/http";
-import { TWITCH_ANDROID_CLIENT_ID } from "../../cli/src/twitch";
+import { TWITCH_SMARTBOX_CLIENT_ID, TWITCH_WEB_CLIENT_ID } from "../../cli/src/twitch";
 
 import { NotificationHub } from "./notifications";
 
@@ -251,7 +252,7 @@ type WebController = ReturnType<typeof createBackgroundController<ExtensionSetti
 
 class RuntimeManager {
   private controller?: WebController;
-  private transport?: Awaited<ReturnType<typeof createHttpTransport>>;
+  private transport?: ReturnType<typeof createHttpTransport>;
   private jobs?: ReturnType<typeof createNodeJobScheduler>;
   private restartPromise?: Promise<void>;
 
@@ -263,7 +264,19 @@ class RuntimeManager {
   async start(): Promise<void> {
     await mkdir(DATA_DIR, { recursive: true });
     const credentials = loadCredentials(AUTH_DIR);
-    const transport = createHttpTransport(credentials, TRANSPORT_SUPPORT);
+    const twitch = credentials.twitch;
+    const webIntegrity = TRANSPORT_SUPPORT.twitch
+      && twitch?.clientId === TWITCH_WEB_CLIENT_ID
+      && twitch.authToken
+      ? new TwitchWebIntegrityManager({
+          authToken: twitch.authToken,
+          deviceId: twitch.deviceId ?? "",
+          kasadaSessionCookie: twitch.kasadaSessionCookie,
+          onSessionCookie: (value) =>
+            saveCredentials(AUTH_DIR, { twitch: { kasadaSessionCookie: value } }),
+        })
+      : undefined;
+    const transport = createHttpTransport(credentials, TRANSPORT_SUPPORT, webIntegrity);
 
     let dispatchJob: (name: string) => void = () => undefined;
     const jobs = createNodeJobScheduler((name) => dispatchJob(name));
@@ -399,7 +412,12 @@ await runtime.start();
 const authSessions = new Map<string, AuthSession>();
 
 function importedCredentials(value: unknown): {
-  twitch?: { authToken?: string; deviceId?: string; clientId?: string };
+  twitch?: {
+    authToken?: string;
+    deviceId?: string;
+    clientId?: string;
+    kasadaSessionCookie?: string;
+  };
   kick?: { sessionToken?: string };
 } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -412,7 +430,12 @@ function importedCredentials(value: unknown): {
     : root;
 
   const imported: {
-    twitch?: { authToken?: string; deviceId?: string; clientId?: string };
+    twitch?: {
+      authToken?: string;
+      deviceId?: string;
+      clientId?: string;
+      kasadaSessionCookie?: string;
+    };
     kick?: { sessionToken?: string };
   } = {};
 
@@ -421,12 +444,16 @@ function importedCredentials(value: unknown): {
     const authToken = typeof twitch.authToken === "string" ? twitch.authToken.trim() : undefined;
     const deviceId = typeof twitch.deviceId === "string" ? twitch.deviceId.trim() : undefined;
     const clientId = typeof twitch.clientId === "string" ? twitch.clientId.trim() : undefined;
+    const kasadaSessionCookie = typeof twitch.kasadaSessionCookie === "string"
+      ? twitch.kasadaSessionCookie.trim()
+      : undefined;
 
-    if (authToken || deviceId || clientId) {
+    if (authToken || deviceId || clientId || kasadaSessionCookie) {
       imported.twitch = {
         ...(authToken ? { authToken } : {}),
         ...(deviceId ? { deviceId } : {}),
         ...(clientId ? { clientId } : {}),
+        ...(kasadaSessionCookie ? { kasadaSessionCookie } : {}),
       };
     }
   }
@@ -442,7 +469,12 @@ function importedCredentials(value: unknown): {
   }
 
   if (imported.twitch?.authToken && !imported.twitch.clientId) {
-    imported.twitch.clientId = TWITCH_ANDROID_CLIENT_ID;
+    if (!imported.twitch.deviceId || !imported.twitch.kasadaSessionCookie) {
+      throw new Error(
+        "This Twitch browser export is missing the device ID or Kasada session cookie. Export credentials from the updated Lurkloot extension, or use Connect Twitch for limited Smart TV discovery.",
+      );
+    }
+    imported.twitch.clientId = TWITCH_WEB_CLIENT_ID;
   }
 
   return imported;
@@ -458,6 +490,9 @@ function exportedCredentials(): CliCredentialBlob {
             twitch: {
               ...(credentials.twitch.authToken ? { authToken: credentials.twitch.authToken } : {}),
               ...(credentials.twitch.deviceId ? { deviceId: credentials.twitch.deviceId } : {}),
+              ...(credentials.twitch.kasadaSessionCookie
+                ? { kasadaSessionCookie: credentials.twitch.kasadaSessionCookie }
+                : {}),
             },
           }
         : {}),
@@ -495,7 +530,7 @@ async function startTwitchAuth(): Promise<{
       saveCredentials(AUTH_DIR, {
         twitch: {
           authToken: accessToken,
-          clientId: TWITCH_ANDROID_CLIENT_ID,
+          clientId: TWITCH_SMARTBOX_CLIENT_ID,
         },
       });
       await runtime.restart();
