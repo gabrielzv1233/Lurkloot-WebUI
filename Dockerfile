@@ -31,7 +31,7 @@ COPY overlay/ packages/webui/
 RUN mkdir -p packages/webui/public \
     && cp packages/extension/public/icon/128.png packages/webui/public/icon-128.png
 
-RUN pnpm install --no-frozen-lockfile --filter @lurkloot/webui...
+RUN pnpm install --no-frozen-lockfile --filter @lurkloot/webui... --filter @lurkloot/cli...
 RUN pnpm --filter @lurkloot/webui build \
     && cp /tmp/lurkloot-sha packages/webui/dist/lurkloot-upstream-sha.txt
 
