@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG LURKLOOT_REF=develop
+ARG LURKLOOT_REF=feat/cli-twitch-web-integrity
 
 FROM node:24-slim AS build
 ARG LURKLOOT_REF
