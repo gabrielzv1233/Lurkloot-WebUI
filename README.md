@@ -25,6 +25,26 @@ The WebUI runs a real Twitch headless runtime:
 The current transport is Twitch-only. Kick is removed from the WebUI until the
 host switches to Lurkloot's impersonation transport.
 
+### Temporary upstream Twitch recovery ref
+
+Twitch stopped accepting new device-code authorization for the Android client
+that current upstream `develop` still uses. Until Lurkloot merges its active
+recovery work, this repository defaults to upstream branch
+`feat/cli-twitch-web-integrity` (PR #671, stacked on PR #643).
+
+That branch provides two Twitch paths:
+
+- **Connect Twitch** uses Twitch's Smart TV device flow. It can authenticate and
+  headlessly advance watch progress, but Twitch's Smart TV campaign dashboard is
+  incomplete, so campaign discovery can be partial.
+- **Import credentials** accepts a credential export from the updated Lurkloot
+  extension containing the web auth token, device ID, and Kasada session cookie.
+  The headless runtime then mints Twitch web Client-Integrity in Node and can use
+  the fuller web campaign dashboard without running Chromium.
+
+Once the upstream fixes merge, the default ref can move back to `develop` or
+to the next release tag.
+
 ## Architecture
 
 ```text
@@ -74,9 +94,11 @@ under:
 ```
 
 **Import credentials** accepts the Lurkloot extension's credential export as well
-as the CLI credential-store shape. The stock Settings view also exposes
-**Export credentials**, with Lurkloot's confirmation step, for moving the session
-to another headless installation.
+as the CLI credential-store shape. For a browser/web Twitch session, the export
+must include `authToken`, `deviceId`, and `kasadaSessionCookie`; that requires
+the updated upstream extension from PR #671 while the fix is still unmerged.
+The stock Settings view also exposes **Export credentials**, with Lurkloot's
+confirmation step, for moving the session to another headless installation.
 
 Normal Settings import/export remains settings-only and never contains
 credentials.
