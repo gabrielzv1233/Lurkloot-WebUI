@@ -34,6 +34,7 @@ interface WebUiCapabilities {
     kind: string;
     twitch: boolean;
     kick: boolean;
+    twitchIdentity: "web" | "android";
     twitchChannelPointsPush: boolean;
   };
   web: {
@@ -118,6 +119,7 @@ function createWebPopupAdapter(
   catalog: MessageCatalog | undefined,
   fallbackCatalog: MessageCatalog,
   beginTwitchLogin: () => void,
+  capabilities: WebUiCapabilities,
 ): PopupAdapter {
   const download = (filename: string, contents: string, mimeType = "text/plain") => {
     const url = URL.createObjectURL(new Blob([contents], { type: mimeType }));
@@ -209,7 +211,10 @@ function createWebPopupAdapter(
     resetExtension: () => api<RuntimeSnapshot>("/api/reset", { method: "POST" }),
     compatibilityRegistry: COMPATIBILITY_REGISTRY,
     resolveCompatibility: (settings) =>
-      resolveCompatibility(settings, { host: "cli", twitchIdentity: "android" }),
+      resolveCompatibility(settings, {
+        host: "cli",
+        twitchIdentity: capabilities.transport.twitchIdentity,
+      }),
   };
 }
 
@@ -311,8 +316,14 @@ function App({
   };
 
   const adapter = useMemo(
-    () => createWebPopupAdapter(locale, catalog, fallbackCatalog, () => void beginTwitchLogin()),
-    [locale, catalog, fallbackCatalog, login],
+    () => createWebPopupAdapter(
+      locale,
+      catalog,
+      fallbackCatalog,
+      () => void beginTwitchLogin(),
+      capabilities,
+    ),
+    [locale, catalog, fallbackCatalog, login, capabilities],
   );
 
   const closeLogin = () => {
